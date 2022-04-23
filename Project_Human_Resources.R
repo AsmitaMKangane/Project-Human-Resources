@@ -55,6 +55,8 @@ s=sample(1:nrow(hr_train),0.8*nrow(hr_train))
 hr_train1=hr_train[s,] # training data
 hr_train2=hr_train[-s,] # holdout/validation data
 
+###### USING LOGISTIC REGRESSION ######
+
 library(car)
 
 # removing variables based on vif > 5
@@ -189,66 +191,106 @@ hr_train$left[150:170] # 6/10 correct
 confusionMatrix(factor(pred_class), factor(hr_train$left))
 # Accuracy : 0.7337         
 # Sensitivity : 0.8514         
-# Specificity : 0.4494   
+# Specificity : 0.4494 
 
 
-# To select ideal cut-off
+###### USING DECISION TREE ######
 
-real <- hr_train$left
+library(tree)
+library(cvTools) 
 
-cutoffs <- seq(0.01,0.99,0.01); cutoffs
+dtree <- tree(left ~ . , hr_train1)
+dtree
+plot(dtree)
+text(dtree)
 
-cutoff_data <- data.frame(cutoff = 99, Accuracy = 99, 
-                          Sn = 99, Sp=99, KS=99, 
-                          F5=99, F.1=99, M=99)
+trn.tree <- predict(dtree, newdata = hr_train1)
+trn.tree[1:5]
+hr_train1$left[1:5]
 
-for(cutoff in cutoffs){
-  
-  predicted = as.numeric(tran.prob > cutoff)
-  
-  TP=sum(real==1 & predicted==1)
-  TN=sum(real==0 & predicted==0)
-  FP=sum(real==0 & predicted==1)
-  FN=sum(real==1 & predicted==0)
-  
-  P=TP+FN
-  N=TN+FP
-  
-  Accuracy=(TP+TN)/(P+N)
-  Sn = TP/P
-  Sp = TN/N
-  precision = TP/(TP + FP)
-  recall = Sn
-  
-  KS = (TP/P) - (FP/N)
-  F5 = (26*precision*recall)/((25*precision) + recall)
-  F.1=(1.01*precision*recall)/((.01*precision)+recall)
-  
-  M=(4*FP+FN)/(5*(P+N))
-  
-  cutoff_data=rbind(cutoff_data,
-                    c(cutoff,Accuracy, Sn,Sp,KS,F5,F.1,M))
-}
+val.tree <- predict(dtree, newdata = hr_train2)
+val.tree[1:15]
+hr_train2$left[1:15]
 
-cutoff_data = cutoff_data[-1,  ]
-View(cutoff_data)
+# AUC Curve
+library(pROC)
+# for training data - 0.8247
+auc(roc(hr_train1$left, trn.tree))
+# for validation data- 0.8444
+auc(roc(hr_train2$left, val.tree))
 
-# convert cutoff_data in long data
+plot(roc(hr_train1$left, trn.tree))
+plot(roc(hr_train2$left, val.tree))
 
-library(tidyr)
+plot(roc(hr_train2$left ,val.tree),
+     col="yellow", lwd=3, main="ROC Curve", 
+     asp = NA, legacy.axes = TRUE)
 
-cutoff_long = cutoff_data %>% 
-  gather(Measure,Value, Accuracy:M)
+# Predicted class at cut-off 0.4
+# for training data
+train_pred <- ifelse(trn.tree > 0.5, 1, 0)
 
-# Plot the data
-p <- ggplot(cutoff_long, aes(x = cutoff, y = Value, color = Measure))+
-  geom_line()
+# for validation data
+val_pred <- ifelse(val.tree > 0.5, 1, 0)
+val_pred[15:25]
+hr_train2$left[15:25] 
 
-plotly::ggplotly(p)
+# Creating Confusion Matrix
+library(caret)
+
+# for Training data
+confusionMatrix(factor(train_pred), factor(hr_train1$left))
+# Accuracy : 0.8715          
+# Sensitivity : 0.9569         
+# Specificity : 0.6659 
+
+
+# for validation data
+confusionMatrix(factor(val_pred), factor(hr_train2$left))
+# Accuracy : 0.8767          
+# Sensitivity : 0.9496         
+# Specificity : 0.6993
+
+## Create decision tree model for entire training data
+
+dtree_final <- tree(left ~ . , hr_train1)
+
+# predicting probabilities
+
+tran.prob <- predict(dtree_final, newdata = hr_train)
+
+auc(roc(hr_train$left, tran.prob)) # 0.8286
+
+plot(roc(hr_train$left ,tran.prob),
+     col="yellow", lwd=3, main="ROC Curve", 
+     asp = NA, legacy.axes = TRUE)
+
+# Predicted class at cut-off 0.4
+
+pred_class <- ifelse(tran.prob > 0.5, 1, 0)
+pred_class[155:175]
+hr_train$left[155:175] # 17/20 correct 
+
+pred_class[150:170]
+hr_train$left[150:170] # 15/20 correct 
+
+# final confusion matrix
+
+confusionMatrix(factor(pred_class), factor(hr_train$left))
+# Accuracy : 0.8726        
+# Sensitivity : 0.9554         
+# Specificity : 0.6725   
+
 
 # For final test data
 
-test.prob <- predict(final_model_step, newdata = hr_test, type = 'response')
+test.prob <- predict(dtree_final, newdata = hr_test)
+test_class <- ifelse(test.prob > 0.4, 1, 0)
+
+
+# For final test data
+
+test.prob <- predict(dtree_final, newdata = hr_test, type = 'response')
 test_class <- ifelse(test.prob > 0.4, 1, 0)
 
 table(test_class)
